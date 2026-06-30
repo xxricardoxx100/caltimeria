@@ -42,6 +42,7 @@ def crear_driver(headless: bool = True):
 
     with LOCK_CHROMEDRIVER:
         driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)
+    driver.set_page_load_timeout(30)
     return driver
 
 
