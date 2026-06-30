@@ -14,22 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Torch (usado por easyocr) se instala aparte con el indice CPU-only:
-# el wheel por defecto de PyPI arrastra soporte CUDA y pesa varios GB
-# de mas, innecesario en un servidor sin GPU.
-RUN pip install --no-cache-dir \
-        --index-url https://download.pytorch.org/whl/cpu \
-        torch==2.12.1 torchvision==0.27.1
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-
-# Pre-descarga los modelos de EasyOCR durante el build para que no se
-# intenten descargar en el primer request de produccion (lo que causa un
-# pico de memoria que el OOM killer mata).
-RUN python3 -c "import easyocr; easyocr.Reader(['en'], gpu=False, verbose=True)"
 
 EXPOSE 8000
 

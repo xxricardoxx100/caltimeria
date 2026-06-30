@@ -2,23 +2,21 @@
 # -*- coding: utf-8 -*-
 """
 Consulta de vigencia de SOAT por PLACA en APESEG.
-Tiene captcha de 6 caracteres alfanumericos, resuelto con EasyOCR.
+Tiene captcha de 6 caracteres alfanumericos, resuelto con pytesseract.
 """
 
 import argparse
 import base64
 import json
+import platform
 import re
 import sys
 import time
 import os
-import warnings
-
-warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 
 import cv2
 import numpy as np
-import easyocr
+import pytesseract
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
@@ -27,9 +25,9 @@ from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
 
 URL = "https://www.apeseg.org.pe/consultas-soat/"
 IFRAME_SELECTOR = "iframe[src*='consulta-soat']"
-ALLOWLIST = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-_reader = None
+if platform.system() == "Windows":
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
 def normalizar_placa(placa: str) -> str:
@@ -53,13 +51,6 @@ def crear_driver(headless: bool = True):
     return driver
 
 
-def obtener_reader():
-    global _reader
-    if _reader is None:
-        _reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-    return _reader
-
-
 def resolver_captcha(driver):
     img_el = driver.find_element(By.CSS_SELECTOR, "img.captcha-img")
     src = img_el.get_attribute("src")
@@ -68,8 +59,12 @@ def resolver_captcha(driver):
     arr = np.frombuffer(data, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
-    resultados = obtener_reader().readtext(img, allowlist=ALLOWLIST)
-    texto = "".join(r[1] for r in resultados)
+    img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    config = "--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    texto = pytesseract.image_to_string(binary, config=config).strip().replace(" ", "").replace("\n", "")
     return texto
 
 

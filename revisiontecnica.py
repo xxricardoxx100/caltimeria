@@ -2,42 +2,33 @@
 # -*- coding: utf-8 -*-
 """
 Consulta de Certificados de Inspeccion Tecnica Vehicular (CITV) por PLACA en el MTC.
-Tiene captcha de 6 digitos, resuelto con EasyOCR. No requiere navegador: todo el
+Tiene captcha de 6 digitos, resuelto con pytesseract. No requiere navegador: todo el
 flujo se hace por HTTP directo contra el backend del portal (rec.mtc.gob.pe).
 """
 
 import argparse
 import base64
 import json
+import platform
 import re
 import sys
 import os
-import warnings
-
-warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 
 import cv2
 import numpy as np
+import pytesseract
 import requests
-import easyocr
 
 URL_PAGINA = "https://rec.mtc.gob.pe/Citv/ArConsultaCitv"
 URL_CAPTCHA = "https://rec.mtc.gob.pe/CITV/refrescarCaptcha"
 URL_BUSCAR = "https://rec.mtc.gob.pe/CITV/JrCITVConsultarFiltro"
-ALLOWLIST = "0123456789"
 
-_reader = None
+if platform.system() == "Windows":
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
 def normalizar_placa(placa: str) -> str:
     return re.sub(r"[\s\-]", "", placa).upper()
-
-
-def obtener_reader():
-    global _reader
-    if _reader is None:
-        _reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-    return _reader
 
 
 def crear_sesion():
@@ -54,8 +45,12 @@ def resolver_captcha(sesion):
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
-    resultados = obtener_reader().readtext(img, allowlist=ALLOWLIST)
-    texto = "".join(res[1] for res in resultados)
+    img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    config = "--psm 8 -c tessedit_char_whitelist=0123456789"
+    texto = pytesseract.image_to_string(binary, config=config).strip().replace(" ", "").replace("\n", "")
     return texto
 
 
