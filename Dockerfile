@@ -26,6 +26,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Pre-descarga los modelos de EasyOCR durante el build para que no se
+# intenten descargar en el primer request de produccion (lo que causa un
+# pico de memoria que el OOM killer mata).
+RUN python3 -c "import easyocr; easyocr.Reader(['en'], gpu=False, verbose=True)"
+
 EXPOSE 8000
 
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"]
