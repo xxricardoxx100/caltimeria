@@ -18,7 +18,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException
 
-from navegador import LOCK_CHROMEDRIVER, RUTA_CHROMEDRIVER
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
 
 URL = "https://pasarela.atu.gob.pe/"
 
@@ -41,7 +41,7 @@ def crear_driver(headless: bool = True):
     options.add_argument("--lang=es-PE")
 
     with LOCK_CHROMEDRIVER:
-        driver = uc.Chrome(options=options, driver_executable_path=RUTA_CHROMEDRIVER)
+        driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)
     return driver
 
 

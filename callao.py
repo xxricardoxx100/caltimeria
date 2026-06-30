@@ -23,7 +23,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 
-from navegador import LOCK_CHROMEDRIVER, RUTA_CHROMEDRIVER
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
 
 URL = "https://pagopapeletascallao.pe/"
 
@@ -53,7 +53,7 @@ def crear_driver(headless: bool = False):
     options.add_argument("--lang=es-PE")
 
     with LOCK_CHROMEDRIVER:
-        driver = uc.Chrome(options=options, driver_executable_path=RUTA_CHROMEDRIVER)
+        driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)
     return driver
 
 
