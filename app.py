@@ -319,11 +319,15 @@ async def consultar_soat_ep(req: PlacaRequest):
 async def consultar_revisiontecnica_ep(req: PlacaRequest):
     try:
         loop = asyncio.get_event_loop()
-        registros = await loop.run_in_executor(executor, lambda: consultar_revisiontecnica(req.placa))
+        resultado = await loop.run_in_executor(executor, lambda: consultar_revisiontecnica(req.placa))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al consultar: {e}")
 
+    if isinstance(resultado, dict) and resultado.get("sin_resultados"):
+        return {"ultimo": None, "sin_resultados": True}
+
+    registros = resultado if isinstance(resultado, list) else [resultado]
     ultimo = registros[0] if registros else None
     return {"ultimo": ultimo, "sin_resultados": not registros}

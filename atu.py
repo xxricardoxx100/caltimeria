@@ -135,12 +135,12 @@ def consultar(placa: str, headless: bool = True):
     # El servidor de ATU bloquea IPs de proveedores cloud fuera de Peru.
     import socket
     try:
-        socket.setdefaulttimeout(5)
+        socket.setdefaulttimeout(15)
         socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("pasarela.atu.gob.pe", 443))
     except OSError:
         raise RuntimeError(
-            "El servidor de ATU no es accesible desde esta ubicacion. "
-            "Probablemente bloquea IPs de servidores fuera de Peru."
+            "No se pudo conectar al servidor de ATU. "
+            "El servicio puede estar temporalmente no disponible."
         )
     finally:
         socket.setdefaulttimeout(None)

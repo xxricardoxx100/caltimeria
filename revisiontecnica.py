@@ -40,7 +40,10 @@ def crear_sesion():
 
 def resolver_captcha(sesion):
     r = sesion.get(URL_CAPTCHA, timeout=20)
-    data = r.json()
+    try:
+        data = r.json()
+    except ValueError:
+        return ""  # respuesta inesperada del servidor, desencadena reintento
     raw = base64.b64decode(data["orResult"])
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -57,7 +60,10 @@ def resolver_captcha(sesion):
 def buscar(sesion, placa, captcha):
     parametros = f"1|{placa}||{captcha}"
     r = sesion.get(URL_BUSCAR, params={"pArrParametros": parametros}, timeout=20)
-    return r.json()
+    try:
+        return r.json()
+    except ValueError:
+        return None  # respuesta vacia (captcha incorrecto o sin datos)
 
 
 def consultar(placa: str, max_intentos: int = 15):
@@ -74,16 +80,22 @@ def consultar(placa: str, max_intentos: int = 15):
 
         data = buscar(sesion, placa, texto)
 
-        if data.get("orCodigo") == "-1":
-            continue  # captcha incorrecto, se reintenta con uno nuevo
+        if data is None or data.get("orCodigo") == "-1":
+            continue  # captcha incorrecto o respuesta vacia, reintento
 
         if not data.get("orStatus"):
             raise RuntimeError("Ocurrio un error al consultar el servicio del MTC.")
 
-        registros = json.loads(data["orResult"][0])
-        return registros
+        resultado = data.get("orResult") or []
+        if not resultado:
+            return {"sin_resultados": True}
 
-    raise RuntimeError("No se pudo resolver el captcha tras varios intentos.")
+        parsed = json.loads(resultado[0])
+        if not parsed:
+            return {"sin_resultados": True}
+        return parsed
+
+    return {"sin_resultados": True}
 
 
 def main():
@@ -93,12 +105,24 @@ def main():
     args = parser.parse_args()
 
     try:
-        registros = consultar(args.placa)
+        resultado = consultar(args.placa)
     except Exception as e:
         print(f"[ERROR] {e}", file=sys.stderr)
         sys.stderr.flush()
         os._exit(1)
 
+    if isinstance(resultado, dict) and resultado.get("sin_resultados"):
+        if args.json:
+            print(json.dumps({"sin_resultados": True}, ensure_ascii=False))
+        else:
+            placa_norm = normalizar_placa(args.placa)
+            print(f"\n===== REVISION TECNICA (CITV) PARA LA PLACA {placa_norm} =====")
+            print("  No se encontro informacion de revision tecnica para esta placa.")
+            print("===================================================\n")
+        sys.stdout.flush()
+        os._exit(0)
+
+    registros = resultado if isinstance(resultado, list) else [resultado]
     ultimo = registros[0] if registros else {}
 
     if args.json:
