@@ -45,7 +45,6 @@ def normalizar_placa(placa: str) -> str:
 
 def crear_driver(headless: bool = False):
     options = uc.ChromeOptions()
-    options.page_load_strategy = "eager"
     if headless:
         options.add_argument("--headless")
     options.add_argument("--no-sandbox")

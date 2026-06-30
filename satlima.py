@@ -66,7 +66,6 @@ def limpiar_texto_monto(texto: str) -> str:
 
 def crear_driver(headless: bool = True):
     options = uc.ChromeOptions()
-    options.page_load_strategy = "eager"
     if headless:
         options.add_argument("--headless")
     options.add_argument("--no-sandbox")
