@@ -18,9 +18,21 @@ del driver baja a ~1s.
 """
 
 import os
+import platform
 import threading
 
 LOCK_CHROMEDRIVER = threading.Lock()
 
-_RUTA_CACHE = os.path.join(os.environ.get("APPDATA", ""), "undetected_chromedriver", "undetected_chromedriver.exe")
-RUTA_CHROMEDRIVER = _RUTA_CACHE if os.path.exists(_RUTA_CACHE) else None
+
+def _ruta_cache_chromedriver():
+    if platform.system() == "Windows":
+        base = os.environ.get("APPDATA", "")
+        nombre = "undetected_chromedriver.exe"
+    else:
+        base = os.path.join(os.path.expanduser("~"), ".local", "share")
+        nombre = "undetected_chromedriver"
+    ruta = os.path.join(base, "undetected_chromedriver", nombre)
+    return ruta if os.path.exists(ruta) else None
+
+
+RUTA_CHROMEDRIVER = _ruta_cache_chromedriver()

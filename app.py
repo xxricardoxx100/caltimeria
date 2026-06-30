@@ -266,11 +266,8 @@ async function consultarTodo() {
   btn.disabled = true;
 
   try {
-    // Las automaticas primero, en paralelo. SAT Lima va al final porque
-    // es la mas lenta y requiere resolver el captcha a mano.
-    const automaticas = ['callao', 'sutran', 'atu', 'soat', 'revisiontecnica'];
-    await Promise.allSettled(automaticas.map(f => consultarFuente(f, placa)));
-    await consultarFuente('satlima', placa);
+    const fuentes = ['satlima', 'callao', 'sutran', 'atu', 'soat', 'revisiontecnica'];
+    await Promise.allSettled(fuentes.map(f => consultarFuente(f, placa)));
   } finally {
     btn.disabled = false;
   }
@@ -295,7 +292,7 @@ def index():
 
 @app.post("/consultar/satlima")
 async def consultar_satlima_ep(req: PlacaRequest):
-    return await ejecutar(consultar_satlima, req.placa, headless=True, manual_captcha=True)
+    return await ejecutar(consultar_satlima, req.placa, headless=True)
 
 
 @app.post("/consultar/callao")

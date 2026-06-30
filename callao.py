@@ -45,11 +45,12 @@ def crear_driver(headless: bool = False):
     if headless:
         options.add_argument("--headless")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
 
     with LOCK_CHROMEDRIVER:
-        driver = uc.Chrome(options=options, version_main=149, driver_executable_path=RUTA_CHROMEDRIVER)
+        driver = uc.Chrome(options=options, driver_executable_path=RUTA_CHROMEDRIVER)
     return driver
 
 

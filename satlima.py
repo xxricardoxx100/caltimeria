@@ -3,6 +3,13 @@
 """
 Consulta de papeletas e impuestos vehiculares por PLACA en SAT Lima.
 Extracción directa de Totales para evitar filas ocultas duplicadas.
+
+El reCAPTCHA se resuelve con el servicio pago 2Captcha (variable de entorno
+TWOCAPTCHA_API_KEY, leida desde el .env del proyecto): se envia el sitekey
+de la pagina y se inyecta el token resuelto directamente en el campo oculto
+del widget. La pagina valida el captcha vía grecaptcha.getResponse(), que
+lee ese mismo campo, asi que no hace falta interactuar con el checkbox ni
+abrir el navegador de forma visible.
 """
 
 import argparse
@@ -12,6 +19,7 @@ import sys
 import time
 import os
 
+import requests
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
@@ -26,13 +34,23 @@ SELECT_TIPO_ID = "strTipDoc"
 INPUT_DATO_ID = "strNumDoc"
 PLACA_VALUE = "3"
 
-# Perfil de Chrome persistente (no temporal). Un perfil nuevo en cada
-# ejecucion no tiene cookies ni historial, lo que hace que el scoring de
-# riesgo de reCAPTCHA lo trate siempre como "desconocido" y exija el reto
-# de imagenes. Reutilizando el mismo perfil entre consultas se acumulan
-# cookies de confianza de Google y el checkbox simple vuelve a ser
-# suficiente la mayoria de las veces (como pasaba antes).
-PERFIL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chrome_profile_satlima")
+TWOCAPTCHA_IN_URL = "https://2captcha.com/in.php"
+TWOCAPTCHA_RES_URL = "https://2captcha.com/res.php"
+
+
+def _cargar_env():
+    """Carga variables del .env del proyecto (si existe) sin depender de
+    python-dotenv. No pisa variables ya definidas en el entorno real."""
+    ruta_env = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(ruta_env):
+        return
+    with open(ruta_env, encoding="utf-8") as f:
+        for linea in f:
+            linea = linea.strip()
+            if not linea or linea.startswith("#") or "=" not in linea:
+                continue
+            clave, _, valor = linea.partition("=")
+            os.environ.setdefault(clave.strip(), valor.strip())
 
 
 def normalizar_placa(placa: str) -> str:
@@ -46,19 +64,17 @@ def limpiar_texto_monto(texto: str) -> str:
     return numeros[0] if numeros else "0.00"
 
 
-def crear_driver(headless: bool = False):
+def crear_driver(headless: bool = True):
     options = uc.ChromeOptions()
     if headless:
-        options.add_argument('--headless')
-
+        options.add_argument("--headless")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument(f"--user-data-dir={PERFIL_DIR}")
 
     with LOCK_CHROMEDRIVER:
-        driver = uc.Chrome(options=options, version_main=149, driver_executable_path=RUTA_CHROMEDRIVER)
+        driver = uc.Chrome(options=options, driver_executable_path=RUTA_CHROMEDRIVER)
     return driver
 
 
@@ -88,77 +104,80 @@ def escribir_placa(driver, wait, placa: str):
         )
 
 
-def _estado_checkbox(driver):
-    """Lee aria-checked del checkbox de reCAPTCHA. None si no se pudo leer
-    (incluida la sesion del navegador cerrada/crasheada)."""
+def obtener_sitekey(driver) -> str:
+    sitekey = driver.execute_script(
+        "var el = document.querySelector('[data-sitekey]');"
+        "return el ? el.getAttribute('data-sitekey') : null;"
+    )
+    if sitekey:
+        return sitekey
+
+    # Respaldo: el sitekey tambien viaja en la URL del iframe del checkbox.
     try:
         iframe = driver.find_element(By.XPATH, "//iframe[contains(@src, 'recaptcha') and contains(@src, 'anchor')]")
-        driver.switch_to.frame(iframe)
-        estado = driver.find_element(By.ID, "recaptcha-anchor").get_attribute("aria-checked")
-        driver.switch_to.default_content()
-        return estado
+        match = re.search(r"[?&]k=([^&]+)", iframe.get_attribute("src") or "")
+        if match:
+            return match.group(1)
     except Exception:
-        try:
-            driver.switch_to.default_content()
-        except Exception:
-            pass
-        return None
+        pass
+
+    raise RuntimeError("No se pudo obtener el sitekey del reCAPTCHA de SAT Lima.")
 
 
-def _hay_reto_visible(driver):
-    """True si Google abrio el iframe del reto de imagenes (bframe)."""
-    return bool(driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha') and contains(@src, 'bframe')]"))
+def resolver_recaptcha_2captcha(sitekey: str, page_url: str, timeout: int = 150) -> str:
+    """Resuelve un reCAPTCHA v2 con 2Captcha y devuelve el token listo
+    para inyectar en el campo g-recaptcha-response de la pagina."""
+    api_key = os.environ.get("TWOCAPTCHA_API_KEY")
+    if not api_key:
+        raise RuntimeError("Falta TWOCAPTCHA_API_KEY (definila en el .env del proyecto).")
 
+    resp = requests.post(TWOCAPTCHA_IN_URL, data={
+        "key": api_key,
+        "method": "userrecaptcha",
+        "googlekey": sitekey,
+        "pageurl": page_url,
+        "json": 1,
+    }, timeout=30)
+    datos = resp.json()
+    if datos.get("status") != 1:
+        raise RuntimeError(f"2Captcha rechazó la solicitud: {datos.get('request')}")
 
-def intentar_checkbox(driver, wait, timeout: int = 8) -> bool:
-    """Hace clic en el checkbox de reCAPTCHA y espera un momento a ver si
-    Google lo deja pasar solo. Devuelve True si quedo resuelto sin reto,
-    False si aparecio el reto de imagenes o no se confirmo a tiempo.
-    """
-    print("\n  → Intentando hacer clic en el checkbox de reCAPTCHA...")
-    try:
-        iframe = wait.until(EC.presence_of_element_located((By.XPATH, "//iframe[contains(@src, 'recaptcha') and contains(@src, 'anchor')]")))
-        driver.switch_to.frame(iframe)
-        checkbox = wait.until(EC.element_to_be_clickable((By.ID, "recaptcha-anchor")))
-        time.sleep(1)
-        checkbox.click()
-        print("  → ¡Clic en reCAPTCHA realizado!")
-        driver.switch_to.default_content()
-    except Exception as e:
-        print(f"  → [Advertencia] No se pudo automatizar el clic del CAPTCHA: {e}")
-        driver.switch_to.default_content()
-        return False
+    captcha_id = datos["request"]
+    print(f"  ->Captcha enviado a 2Captcha (id={captcha_id}), esperando resolución...")
 
+    time.sleep(15)  # 2Captcha tarda al menos ~15s en resolver un reCAPTCHA
     inicio = time.time()
     while time.time() - inicio < timeout:
-        if _estado_checkbox(driver) == "true":
-            print("  → Checkbox aceptado sin reto adicional.")
-            return True
-        if _hay_reto_visible(driver):
-            print("  → Google esta pidiendo el reto de imagenes.")
-            return False
-        time.sleep(0.5)
+        resp = requests.get(TWOCAPTCHA_RES_URL, params={
+            "key": api_key,
+            "action": "get",
+            "id": captcha_id,
+            "json": 1,
+        }, timeout=30)
+        datos = resp.json()
 
-    print("  → El checkbox no se confirmo a tiempo.")
-    return False
+        if datos.get("status") == 1:
+            print("  ->Captcha resuelto por 2Captcha.")
+            return datos["request"]
+
+        if datos.get("request") != "CAPCHA_NOT_READY":
+            raise RuntimeError(f"2Captcha devolvió un error: {datos.get('request')}")
+
+        time.sleep(5)
+
+    raise RuntimeError("2Captcha no devolvió el resultado a tiempo.")
 
 
-def esperar_captcha_manual(driver, timeout: int = 90) -> bool:
-    print("\n  → Esperando a que resuelvas el captcha manualmente en la ventana de Chrome...")
-    inicio = time.time()
-    while time.time() - inicio < timeout:
-        if _estado_checkbox(driver) == "true":
-            print("  → ¡Check verde detectado! Avanzando a buscar...")
-            time.sleep(1)
-            return True
-        time.sleep(1)
-
-    print("  → [Tiempo agotado] El CAPTCHA no se resolvio a tiempo.")
-    return False
+def inyectar_token_captcha(driver, token: str):
+    driver.execute_script(
+        "var el = document.getElementById('g-recaptcha-response');"
+        "if (el) { el.style.display = 'block'; el.innerHTML = arguments[0]; el.value = arguments[0]; }",
+        token,
+    )
 
 
 def clic_buscar(driver, wait):
-    print("  → Haciendo clic en el botón Buscar...")
+    print("  ->Haciendo clic en el botón Buscar...")
     boton = wait.until(EC.presence_of_element_located((
         By.XPATH,
         "//button[@onclick='BuscarContribuyentes()']"
@@ -168,9 +187,9 @@ def clic_buscar(driver, wait):
 
 def confirmar_busqueda(driver, wait, timeout: int = 20) -> bool:
     """Hace clic en Buscar y confirma que la tabla de resultados (Paso3)
-    realmente cargó. Con internet lento el checkbox puede marcar "pasado"
-    pero el envío del formulario no completarse a tiempo; esto lo detecta
-    para no devolver un resultado vacío como si fuera válido.
+    realmente cargó. Con internet lento el envío del formulario puede no
+    completarse a tiempo aunque el captcha haya sido valido; esto lo
+    detecta para no devolver un resultado vacío como si fuera válido.
     """
     clic_buscar(driver, wait)
     try:
@@ -178,7 +197,7 @@ def confirmar_busqueda(driver, wait, timeout: int = 20) -> bool:
         time.sleep(2)
         return True
     except TimeoutException:
-        print("  → No se confirmó la carga de resultados (timeout).")
+        print("  ->No se confirmó la carga de resultados (timeout).")
         return False
 
 
@@ -189,7 +208,7 @@ def extraer_resultados(driver):
         "papeletas": {"items": [], "total_web": "0.00"}
     }
 
-    print("  → Extrayendo datos robustos y comprobando totales...")
+    print("  ->Extrayendo datos robustos y comprobando totales...")
 
     # --- 1. EXTRACCIÓN DE IMPUESTO VEHICULAR (Solo el TOTAL general) ---
     try:
@@ -235,7 +254,7 @@ def extraer_resultados(driver):
             try:
                 falta_elem = fila.find_element(By.XPATH, ".//div[contains(@class, 'text-left') and contains(@class, 'item-center')]")
                 falta = falta_elem.text.strip().replace("\n", " ")
-                
+
                 fecha = "No encontrada"
                 columnas_centradas = fila.find_elements(By.CSS_SELECTOR, "div.item-center")
                 for col in columnas_centradas:
@@ -243,7 +262,7 @@ def extraer_resultados(driver):
                     if "/" in texto and len(texto) == 10:
                         fecha = texto
                         break
-                        
+
                 monto_elem = fila.find_element(By.CSS_SELECTOR, "span.monto")
                 monto = monto_elem.text.strip()
 
@@ -258,6 +277,8 @@ def extraer_resultados(driver):
         pass # No tiene papeletas
 
     return resultados
+
+
 def _preparar_busqueda(driver, wait, placa):
     driver.get(URL)
     wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
@@ -267,76 +288,49 @@ def _preparar_busqueda(driver, wait, placa):
     escribir_placa(driver, wait, placa)
 
 
-def consultar(placa: str, headless: bool = True, manual_captcha: bool = True):
-    """Consulta SAT Lima. Por defecto corre oculto (headless); si el
-    checkbox de reCAPTCHA no basta y aparece el reto de imagenes, cierra
-    el navegador oculto y reabre uno visible (mismo perfil persistente)
-    para que el reto se resuelva a mano, y continua el flujo desde ahi.
+def consultar(placa: str, headless: bool = True):
+    """Consulta SAT Lima. Corre oculto (headless) siempre: el reCAPTCHA se
+    resuelve via 2Captcha (sitekey + URL -> token), sin necesidad de
+    interactuar con el widget ni de intervencion humana.
     """
     placa = normalizar_placa(placa)
     if not placa:
         raise ValueError("La placa está vacía.")
 
-    intentos = [headless, False] if headless else [False]
+    _cargar_env()
 
-    driver = None
-    wait = None
-    confirmado = False
+    driver = crear_driver(headless=headless)
+    wait = WebDriverWait(driver, 15)
     try:
-        for i, modo_headless in enumerate(intentos):
-            if driver is not None:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
-            driver = crear_driver(headless=modo_headless)
-            wait = WebDriverWait(driver, 15)
+        _preparar_busqueda(driver, wait, placa)
 
-            _preparar_busqueda(driver, wait, placa)
-            resuelto = intentar_checkbox(driver, wait)
+        sitekey = obtener_sitekey(driver)
+        token = resolver_recaptcha_2captcha(sitekey, URL)
+        inyectar_token_captcha(driver, token)
 
-            es_ultimo_intento = i == len(intentos) - 1
-            if not resuelto and es_ultimo_intento and not modo_headless and manual_captcha:
-                resuelto = esperar_captcha_manual(driver)
-
-            if resuelto:
-                # No basta con que el checkbox marque "pasado": con internet
-                # lento el envio del formulario puede fallar igual. Solo
-                # damos el intento por bueno si la tabla de resultados
-                # realmente carga; si no, escalamos al siguiente intento
-                # (oculto -> visible) en vez de devolver un resultado vacio.
-                confirmado = confirmar_busqueda(driver, wait)
-                if confirmado:
-                    break
-
-        if not confirmado:
-            raise RuntimeError("No se pudo completar la consulta de SAT Lima (captcha no resuelto o timeout de red).")
+        if not confirmar_busqueda(driver, wait):
+            raise RuntimeError("No se pudo completar la consulta de SAT Lima (timeout de red o captcha rechazado).")
 
         return extraer_resultados(driver)
     finally:
-        if driver is not None:
-            try:
-                driver.quit()
-            except Exception:
-                pass
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
 
 def main():
     parser = argparse.ArgumentParser(description="Consulta papeletas e impuestos por placa en SAT Lima")
     parser.add_argument("placa", help="Placa a consultar (ej: ABC123)")
-    parser.add_argument("--headless", action="store_true", help="Sin ventana (puede bajar tu score de confianza)")
-    parser.add_argument("--no-captcha-pause", action="store_true", help="No pausar tras el clic automático")
+    parser.add_argument("--ver-navegador", action="store_true", help="Mostrar la ventana de Chrome")
     parser.add_argument("--json", action="store_true", help="Salida en formato JSON")
     args = parser.parse_args()
 
     try:
-        resultados = consultar(
-            args.placa,
-            headless=args.headless,
-            manual_captcha=not args.no_captcha_pause,
-        )
+        resultados = consultar(args.placa, headless=not args.ver_navegador)
     except Exception as e:
         print(f"[ERROR] {e}", file=sys.stderr)
+        sys.stderr.flush()
         os._exit(1)
 
     tiene_impuestos = resultados["impuesto_vehicular"]["total_web"] != "0.00"
@@ -345,6 +339,7 @@ def main():
 
     if not tiene_impuestos and not tiene_multas and not tiene_papeletas:
         print(f"\nNo se encontraron deudas para la placa {normalizar_placa(args.placa)}.")
+        sys.stdout.flush()
         os._exit(0)
 
     if args.json:
@@ -363,29 +358,30 @@ def main():
         if tiene_papeletas:
             items = resultados["papeletas"]["items"]
             print(f"\n[ PAPELETAS ] - {len(items)} registro(s) encontrados:")
-            
+
             suma_calculada = 0.0
-            
+
             for i, r in enumerate(items, 1):
                 print(f"  --- Papeleta {i} ---")
                 print(f"  Falta: {r['Falta']}")
                 print(f"  Fecha: {r['Fecha']}")
                 print(f"  Monto: S/ {r['Monto']}")
-                
+
                 # Sumar para comprobación (quitando comas si existen)
                 valor_limpio = r['Monto'].replace(',', '')
                 try:
                     suma_calculada += float(valor_limpio)
                 except:
                     pass
-            
+
             print(f"  -----------------------------")
             print(f"  -> Suma de items extraídos   : S/ {suma_calculada:,.2f}")
             print(f"  -> Total Oficial (según web) : S/ {resultados['papeletas']['total_web']}")
-            
+
         print("===================================================\n")
 
 
 if __name__ == "__main__":
     main()
+    sys.stdout.flush()
     os._exit(0)
