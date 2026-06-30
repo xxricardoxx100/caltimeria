@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 # Dependencias de sistema necesarias para correr Chrome headless
 RUN apt-get update && apt-get install -y --no-install-recommends \
