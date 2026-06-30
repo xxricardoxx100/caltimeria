@@ -38,9 +38,11 @@ def normalizar_placa(placa: str) -> str:
 
 def crear_driver(headless: bool = True):
     options = uc.ChromeOptions()
+    options.page_load_strategy = "eager"
     if headless:
         options.add_argument("--headless")
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-setuid-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1366,900")
@@ -48,7 +50,7 @@ def crear_driver(headless: bool = True):
 
     with LOCK_CHROMEDRIVER:
         driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)
-    driver.set_page_load_timeout(30)
+    driver.set_page_load_timeout(60)
     return driver
 
 
