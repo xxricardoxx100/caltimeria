@@ -131,6 +131,20 @@ def consultar(placa: str, headless: bool = True):
     if not placa:
         raise ValueError("La placa esta vacia.")
 
+    # Verificacion rapida de conectividad antes de lanzar Chrome.
+    # El servidor de ATU bloquea IPs de proveedores cloud fuera de Peru.
+    import socket
+    try:
+        socket.setdefaulttimeout(5)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("pasarela.atu.gob.pe", 443))
+    except OSError:
+        raise RuntimeError(
+            "El servidor de ATU no es accesible desde esta ubicacion. "
+            "Probablemente bloquea IPs de servidores fuera de Peru."
+        )
+    finally:
+        socket.setdefaulttimeout(None)
+
     driver = crear_driver(headless=headless)
     wait = WebDriverWait(driver, 15)
     try:
