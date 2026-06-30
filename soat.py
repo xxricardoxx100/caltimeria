@@ -23,6 +23,8 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 
+from navegador import LOCK_CHROMEDRIVER
+
 URL = "https://www.apeseg.org.pe/consultas-soat/"
 IFRAME_SELECTOR = "iframe[src*='consulta-soat']"
 ALLOWLIST = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -42,7 +44,8 @@ def crear_driver(headless: bool = True):
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
 
-    driver = uc.Chrome(options=options, version_main=149)
+    with LOCK_CHROMEDRIVER:
+        driver = uc.Chrome(options=options, version_main=149)
     return driver
 
 

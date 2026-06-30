@@ -22,6 +22,8 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 
+from navegador import LOCK_CHROMEDRIVER
+
 URL = "https://pagopapeletascallao.pe/"
 
 INPUT_PLACA_ID = "valor_busqueda"
@@ -46,7 +48,8 @@ def crear_driver(headless: bool = False):
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
 
-    driver = uc.Chrome(options=options, version_main=149)
+    with LOCK_CHROMEDRIVER:
+        driver = uc.Chrome(options=options, version_main=149)
     return driver
 
 

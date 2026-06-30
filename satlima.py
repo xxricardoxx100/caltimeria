@@ -18,6 +18,8 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
+from navegador import LOCK_CHROMEDRIVER
+
 URL = "https://www.sat.gob.pe/pagosenlinea/"
 
 SELECT_TIPO_ID = "strTipDoc"
@@ -44,8 +46,9 @@ def crear_driver(headless: bool = False):
     options.add_argument("--no-sandbox")
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
-    
-    driver = uc.Chrome(options=options, version_main=149)
+
+    with LOCK_CHROMEDRIVER:
+        driver = uc.Chrome(options=options, version_main=149)
     return driver
 
 

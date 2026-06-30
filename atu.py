@@ -18,6 +18,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException
 
+from navegador import LOCK_CHROMEDRIVER
+
 URL = "https://pasarela.atu.gob.pe/"
 
 SELECT_TIPO_ID = "TipoBusquedaselectElemento"
@@ -37,7 +39,8 @@ def crear_driver(headless: bool = True):
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
 
-    driver = uc.Chrome(options=options, version_main=149)
+    with LOCK_CHROMEDRIVER:
+        driver = uc.Chrome(options=options, version_main=149)
     return driver
 
 

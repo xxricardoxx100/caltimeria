@@ -22,6 +22,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
+from navegador import LOCK_CHROMEDRIVER
+
 URL = "https://webexterno.sutran.gob.pe/WebExterno/Pages/frmRecordInfracciones.aspx"
 
 INPUT_PLACA_ID = "txtPlaca"
@@ -44,7 +46,8 @@ def crear_driver(headless: bool = True):
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
 
-    driver = uc.Chrome(options=options, version_main=149)
+    with LOCK_CHROMEDRIVER:
+        driver = uc.Chrome(options=options, version_main=149)
     return driver
 
 
