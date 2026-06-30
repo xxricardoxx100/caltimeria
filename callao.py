@@ -9,6 +9,7 @@ fondo con ruido y leyendo cada captcha en un canvas limpio).
 import argparse
 import base64
 import json
+import platform
 import re
 import sys
 import time
@@ -32,8 +33,10 @@ BOTON_BUSCAR_ID = "idBuscar"
 
 MAX_INTENTOS_CAPTCHA = 6
 
-# Ruta del ejecutable de Tesseract OCR en Windows.
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# En Windows no esta en el PATH por defecto, hay que apuntar al ejecutable.
+# En Linux (contenedor) tesseract-ocr se instala via apt y ya queda en el PATH.
+if platform.system() == "Windows":
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
 def normalizar_placa(placa: str) -> str:
