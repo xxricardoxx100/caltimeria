@@ -18,13 +18,21 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
-from navegador import LOCK_CHROMEDRIVER
+from navegador import LOCK_CHROMEDRIVER, RUTA_CHROMEDRIVER
 
 URL = "https://www.sat.gob.pe/pagosenlinea/"
 
 SELECT_TIPO_ID = "strTipDoc"
 INPUT_DATO_ID = "strNumDoc"
 PLACA_VALUE = "3"
+
+# Perfil de Chrome persistente (no temporal). Un perfil nuevo en cada
+# ejecucion no tiene cookies ni historial, lo que hace que el scoring de
+# riesgo de reCAPTCHA lo trate siempre como "desconocido" y exija el reto
+# de imagenes. Reutilizando el mismo perfil entre consultas se acumulan
+# cookies de confianza de Google y el checkbox simple vuelve a ser
+# suficiente la mayoria de las veces (como pasaba antes).
+PERFIL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chrome_profile_satlima")
 
 
 def normalizar_placa(placa: str) -> str:
@@ -42,13 +50,15 @@ def crear_driver(headless: bool = False):
     options = uc.ChromeOptions()
     if headless:
         options.add_argument('--headless')
-        
+
     options.add_argument("--no-sandbox")
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument(f"--user-data-dir={PERFIL_DIR}")
 
     with LOCK_CHROMEDRIVER:
-        driver = uc.Chrome(options=options, version_main=149)
+        driver = uc.Chrome(options=options, version_main=149, driver_executable_path=RUTA_CHROMEDRIVER)
     return driver
 
 
@@ -78,46 +88,73 @@ def escribir_placa(driver, wait, placa: str):
         )
 
 
-def procesar_captcha(driver, wait, manual: bool):
+def _estado_checkbox(driver):
+    """Lee aria-checked del checkbox de reCAPTCHA. None si no se pudo leer
+    (incluida la sesion del navegador cerrada/crasheada)."""
+    try:
+        iframe = driver.find_element(By.XPATH, "//iframe[contains(@src, 'recaptcha') and contains(@src, 'anchor')]")
+        driver.switch_to.frame(iframe)
+        estado = driver.find_element(By.ID, "recaptcha-anchor").get_attribute("aria-checked")
+        driver.switch_to.default_content()
+        return estado
+    except Exception:
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
+        return None
+
+
+def _hay_reto_visible(driver):
+    """True si Google abrio el iframe del reto de imagenes (bframe)."""
+    return bool(driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha') and contains(@src, 'bframe')]"))
+
+
+def intentar_checkbox(driver, wait, timeout: int = 8) -> bool:
+    """Hace clic en el checkbox de reCAPTCHA y espera un momento a ver si
+    Google lo deja pasar solo. Devuelve True si quedo resuelto sin reto,
+    False si aparecio el reto de imagenes o no se confirmo a tiempo.
+    """
     print("\n  → Intentando hacer clic en el checkbox de reCAPTCHA...")
     try:
-        iframe = wait.until(EC.presence_of_element_located((By.XPATH, "//iframe[contains(@src, 'recaptcha')]")))
+        iframe = wait.until(EC.presence_of_element_located((By.XPATH, "//iframe[contains(@src, 'recaptcha') and contains(@src, 'anchor')]")))
         driver.switch_to.frame(iframe)
-        
         checkbox = wait.until(EC.element_to_be_clickable((By.ID, "recaptcha-anchor")))
         time.sleep(1)
         checkbox.click()
         print("  → ¡Clic en reCAPTCHA realizado!")
-        
         driver.switch_to.default_content()
     except Exception as e:
         print(f"  → [Advertencia] No se pudo automatizar el clic del CAPTCHA: {e}")
         driver.switch_to.default_content()
+        return False
 
-    if not manual:
-        return
-        
-    print("\n  → Vigilando el CAPTCHA automáticamente...")
-    timeout = 60
     inicio = time.time()
-    
     while time.time() - inicio < timeout:
-        try:
-            iframe = driver.find_element(By.XPATH, "//iframe[contains(@src, 'recaptcha')]")
-            driver.switch_to.frame(iframe)
-            estado = driver.find_element(By.ID, "recaptcha-anchor").get_attribute("aria-checked")
-            driver.switch_to.default_content()
-            
-            if estado == "true":
-                print("  → ¡Check verde detectado! Avanzando a buscar...")
-                time.sleep(1)
-                return
-        except:
-            driver.switch_to.default_content()
-        
+        if _estado_checkbox(driver) == "true":
+            print("  → Checkbox aceptado sin reto adicional.")
+            return True
+        if _hay_reto_visible(driver):
+            print("  → Google esta pidiendo el reto de imagenes.")
+            return False
+        time.sleep(0.5)
+
+    print("  → El checkbox no se confirmo a tiempo.")
+    return False
+
+
+def esperar_captcha_manual(driver, timeout: int = 90) -> bool:
+    print("\n  → Esperando a que resuelvas el captcha manualmente en la ventana de Chrome...")
+    inicio = time.time()
+    while time.time() - inicio < timeout:
+        if _estado_checkbox(driver) == "true":
+            print("  → ¡Check verde detectado! Avanzando a buscar...")
+            time.sleep(1)
+            return True
         time.sleep(1)
-        
-    print("  → [Tiempo agotado] El CAPTCHA no se puso en verde después de 60 segundos.")
+
+    print("  → [Tiempo agotado] El CAPTCHA no se resolvio a tiempo.")
+    return False
 
 
 def clic_buscar(driver, wait):
@@ -129,18 +166,28 @@ def clic_buscar(driver, wait):
     driver.execute_script("arguments[0].click();", boton)
 
 
-def extraer_resultados(driver, wait):
+def confirmar_busqueda(driver, wait, timeout: int = 20) -> bool:
+    """Hace clic en Buscar y confirma que la tabla de resultados (Paso3)
+    realmente cargó. Con internet lento el checkbox puede marcar "pasado"
+    pero el envío del formulario no completarse a tiempo; esto lo detecta
+    para no devolver un resultado vacío como si fuera válido.
+    """
+    clic_buscar(driver, wait)
+    try:
+        WebDriverWait(driver, timeout).until(EC.presence_of_element_located((By.ID, "Paso3")))
+        time.sleep(2)
+        return True
+    except TimeoutException:
+        print("  → No se confirmó la carga de resultados (timeout).")
+        return False
+
+
+def extraer_resultados(driver):
     resultados = {
         "impuesto_vehicular": {"total_web": "0.00"},
+        "multas_tributarias": {"total_web": "0.00"},
         "papeletas": {"items": [], "total_web": "0.00"}
     }
-
-    try:
-        wait.until(EC.presence_of_element_located((By.ID, "Paso3")))
-        time.sleep(2) 
-    except TimeoutException:
-        print("  → No se detectó la tabla de resultados.")
-        return resultados
 
     print("  → Extrayendo datos robustos y comprobando totales...")
 
@@ -153,22 +200,34 @@ def extraer_resultados(driver, wait):
     except Exception:
         pass # No tiene deuda vehicular
 
-    # --- 2. EXTRACCIÓN DE PAPELETAS (Items + TOTAL general) ---
+    # --- 2. EXTRACCIÓN DE MULTAS TRIBUTARIAS (Solo el TOTAL general) ---
+    # Esta sección solo aparece en la página si el vehículo tiene multas
+    # tributarias; en orden siempre va después del impuesto vehicular y
+    # antes de las papeletas.
+    try:
+        div_multas = driver.find_element(By.ID, "divMultasTributarias")
+        total_elem_multas = div_multas.find_element(By.CSS_SELECTOR, "div.montoconcepto")
+        resultados["multas_tributarias"]["total_web"] = limpiar_texto_monto(total_elem_multas.text)
+    except Exception:
+        pass # No tiene multas tributarias
+
+    # --- 3. EXTRACCIÓN DE PAPELETAS (Items + TOTAL general) ---
     try:
         div_papeletas = driver.find_element(By.ID, "divPapeletas")
-        
+
         # Extraer el TOTAL de la cabecera
         total_elem_pap = div_papeletas.find_element(By.CSS_SELECTOR, "div.montoconcepto")
         resultados["papeletas"]["total_web"] = limpiar_texto_monto(total_elem_pap.text)
 
-        # Desplegar para leer las filas (solo dentro de papeletas para evitar basura)
-        botones_plus = div_papeletas.find_elements(By.CSS_SELECTOR, "i.fa-plus")
-        for btn in botones_plus:
-            try:
-                driver.execute_script("arguments[0].click();", btn)
-                time.sleep(0.2)
-            except:
-                pass
+        # Las filas de detalle empiezan ocultas (display:none) hasta que se
+        # hace clic en el "+". Selenium .text no lee texto de elementos
+        # ocultos, y un clic + sleep fijo es una carrera contra el render;
+        # en vez de eso forzamos el display directamente por JS para que
+        # la lectura de texto que sigue sea inmediata y confiable.
+        driver.execute_script(
+            "arguments[0].querySelectorAll('.menu').forEach(function(el){ el.style.display = 'block'; });",
+            div_papeletas,
+        )
 
         # Leer filas de papeletas
         filas_pap = div_papeletas.find_elements(By.CSS_SELECTOR, "div.row.gridtree-row[data-id]")
@@ -199,27 +258,67 @@ def extraer_resultados(driver, wait):
         pass # No tiene papeletas
 
     return resultados
-def consultar(placa: str, headless: bool = False, manual_captcha: bool = True):
+def _preparar_busqueda(driver, wait, placa):
+    driver.get(URL)
+    wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+    time.sleep(2)
+
+    seleccionar_placa(driver, wait)
+    escribir_placa(driver, wait, placa)
+
+
+def consultar(placa: str, headless: bool = True, manual_captcha: bool = True):
+    """Consulta SAT Lima. Por defecto corre oculto (headless); si el
+    checkbox de reCAPTCHA no basta y aparece el reto de imagenes, cierra
+    el navegador oculto y reabre uno visible (mismo perfil persistente)
+    para que el reto se resuelva a mano, y continua el flujo desde ahi.
+    """
     placa = normalizar_placa(placa)
     if not placa:
         raise ValueError("La placa está vacía.")
 
-    driver = crear_driver(headless=headless)
-    wait = WebDriverWait(driver, 15)
-    try:
-        driver.get(URL)
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(2) 
+    intentos = [headless, False] if headless else [False]
 
-        seleccionar_placa(driver, wait)
-        escribir_placa(driver, wait, placa)
-        procesar_captcha(driver, wait, manual_captcha and not headless)
-        clic_buscar(driver, wait)
-        
-        print("  → Esperando a que cargue la tabla de resultados...")
-        return extraer_resultados(driver, wait)
+    driver = None
+    wait = None
+    confirmado = False
+    try:
+        for i, modo_headless in enumerate(intentos):
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            driver = crear_driver(headless=modo_headless)
+            wait = WebDriverWait(driver, 15)
+
+            _preparar_busqueda(driver, wait, placa)
+            resuelto = intentar_checkbox(driver, wait)
+
+            es_ultimo_intento = i == len(intentos) - 1
+            if not resuelto and es_ultimo_intento and not modo_headless and manual_captcha:
+                resuelto = esperar_captcha_manual(driver)
+
+            if resuelto:
+                # No basta con que el checkbox marque "pasado": con internet
+                # lento el envio del formulario puede fallar igual. Solo
+                # damos el intento por bueno si la tabla de resultados
+                # realmente carga; si no, escalamos al siguiente intento
+                # (oculto -> visible) en vez de devolver un resultado vacio.
+                confirmado = confirmar_busqueda(driver, wait)
+                if confirmado:
+                    break
+
+        if not confirmado:
+            raise RuntimeError("No se pudo completar la consulta de SAT Lima (captcha no resuelto o timeout de red).")
+
+        return extraer_resultados(driver)
     finally:
-        driver.quit()
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
 
 def main():
@@ -241,9 +340,10 @@ def main():
         os._exit(1)
 
     tiene_impuestos = resultados["impuesto_vehicular"]["total_web"] != "0.00"
+    tiene_multas = resultados["multas_tributarias"]["total_web"] != "0.00"
     tiene_papeletas = resultados["papeletas"]["total_web"] != "0.00"
 
-    if not tiene_impuestos and not tiene_papeletas:
+    if not tiene_impuestos and not tiene_multas and not tiene_papeletas:
         print(f"\nNo se encontraron deudas para la placa {normalizar_placa(args.placa)}.")
         os._exit(0)
 
@@ -251,11 +351,15 @@ def main():
         print(json.dumps(resultados, ensure_ascii=False, indent=2))
     else:
         print(f"\n===== RESULTADOS PARA LA PLACA {normalizar_placa(args.placa)} =====")
-        
+
         if tiene_impuestos:
             print(f"\n[ IMPUESTO VEHICULAR ]")
             print(f"  -> Total Adeudado (según web): S/ {resultados['impuesto_vehicular']['total_web']}")
-                
+
+        if tiene_multas:
+            print(f"\n[ MULTAS TRIBUTARIAS ]")
+            print(f"  -> Total Adeudado (según web): S/ {resultados['multas_tributarias']['total_web']}")
+
         if tiene_papeletas:
             items = resultados["papeletas"]["items"]
             print(f"\n[ PAPELETAS ] - {len(items)} registro(s) encontrados:")

@@ -92,7 +92,7 @@ HTML = """<!DOCTYPE html>
 <div class="grid">
   <div class="card">
     <h2>SAT Lima (Impuesto y Papeletas)</h2>
-    <div class="status idle" id="status-satlima">Esperando consulta. El captcha se resuelve manualmente en la ventana de Chrome que se abre.</div>
+    <div class="status idle" id="status-satlima">Esperando consulta.</div>
     <div id="content-satlima"></div>
   </div>
 
@@ -162,9 +162,17 @@ const renderizar = {
     const impHtml = (totalImp === '0.00')
       ? '<p class="sin-deuda">Sin deuda de impuesto vehicular</p>'
       : '<span class="total-badge">S/ ' + esc(totalImp) + '</span>';
+
+    const totalMultas = data.multas_tributarias ? data.multas_tributarias.total_web : '0.00';
+    const multasHtml = (totalMultas === '0.00')
+      ? ''
+      : '<p style="margin-top:14px"><b>Multas Tributarias:</b></p>' +
+        '<span class="total-badge">S/ ' + esc(totalMultas) + '</span>';
+
     const pap = data.papeletas;
     const papHtml = tablaDeuda(pap.items, ['Falta', 'Fecha', 'Monto'], 'Total oficial', pap.total_web);
     div.innerHTML = '<p><b>Impuesto Vehicular:</b></p>' + impHtml +
+                    multasHtml +
                     '<p style="margin-top:14px"><b>Papeletas:</b></p>' + papHtml;
   },
 
@@ -250,17 +258,22 @@ async function consultarFuente(fuente, placa) {
   }
 }
 
-function consultarTodo() {
+async function consultarTodo() {
   const placa = document.getElementById('placa').value.trim().toUpperCase();
   if (!placa) { alert('Ingresa una placa'); return; }
 
   const btn = document.getElementById('btn');
   btn.disabled = true;
 
-  const fuentes = ['satlima', 'callao', 'sutran', 'atu', 'soat', 'revisiontecnica'];
-  Promise.allSettled(fuentes.map(f => consultarFuente(f, placa))).finally(() => {
+  try {
+    // Las automaticas primero, en paralelo. SAT Lima va al final porque
+    // es la mas lenta y requiere resolver el captcha a mano.
+    const automaticas = ['callao', 'sutran', 'atu', 'soat', 'revisiontecnica'];
+    await Promise.allSettled(automaticas.map(f => consultarFuente(f, placa)));
+    await consultarFuente('satlima', placa);
+  } finally {
     btn.disabled = false;
-  });
+  }
 }
 
 document.getElementById('placa').addEventListener('keydown', e => {
@@ -282,7 +295,7 @@ def index():
 
 @app.post("/consultar/satlima")
 async def consultar_satlima_ep(req: PlacaRequest):
-    return await ejecutar(consultar_satlima, req.placa, headless=False, manual_captcha=True)
+    return await ejecutar(consultar_satlima, req.placa, headless=True, manual_captcha=True)
 
 
 @app.post("/consultar/callao")

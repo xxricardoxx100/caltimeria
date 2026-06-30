@@ -23,7 +23,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 
-from navegador import LOCK_CHROMEDRIVER
+from navegador import LOCK_CHROMEDRIVER, RUTA_CHROMEDRIVER
 
 URL = "https://www.apeseg.org.pe/consultas-soat/"
 IFRAME_SELECTOR = "iframe[src*='consulta-soat']"
@@ -45,7 +45,7 @@ def crear_driver(headless: bool = True):
     options.add_argument("--lang=es-PE")
 
     with LOCK_CHROMEDRIVER:
-        driver = uc.Chrome(options=options, version_main=149)
+        driver = uc.Chrome(options=options, version_main=149, driver_executable_path=RUTA_CHROMEDRIVER)
     return driver
 
 
