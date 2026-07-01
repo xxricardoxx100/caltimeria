@@ -28,10 +28,11 @@ import threading
 LOCK_CHROMEDRIVER = threading.Lock()
 # Limita cuantos Chrome pueden correr en paralelo para evitar OOM en Railway.
 # Cada Chrome headless consume ~200-300MB; con 5 fuentes que usan Chrome y un
-# contenedor con RAM limitada, permitir mas de 2 en simultaneo hace que el SO
-# mate procesos (se ve como ERR_CONNECTION_RESET o "tab crashed"). El 3er
-# Chrome espera aca hasta que uno libere el slot.
-SEMAFORO_CHROME = threading.Semaphore(2)
+# contenedor con RAM limitada, permitir 4+ en simultaneo hacia que el SO mate
+# procesos (se veia como ERR_CONNECTION_RESET o "tab crashed"). Con 3 el pico
+# de memoria baja lo suficiente; el 4to Chrome espera aca hasta que uno libere
+# el slot.
+SEMAFORO_CHROME = threading.Semaphore(3)
 
 
 FLAGS_MEMORIA = (

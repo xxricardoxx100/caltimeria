@@ -97,16 +97,24 @@ def consultar(placa: str, max_intentos: int = 15):
         for _ in range(max_intentos):
             texto = resolver_captcha(driver)
             if len(texto) != 6:
+                # El captcha aun no carga (Cloudflare no ha pasado su challenge
+                # o el OCR fallo). Pausar para dar tiempo a que el challenge se
+                # resuelva en vez de quemar las 15 iteraciones en menos de 1s.
+                time.sleep(1)
                 continue
 
             data = buscar(driver, placa, texto)
 
             if data is None or data.get("orCodigo") == "-1":
+                # Respuesta invalida (Cloudflare) o captcha incorrecto: reintentar.
+                time.sleep(1)
                 continue
 
             if not data.get("orStatus"):
                 raise RuntimeError("Ocurrio un error al consultar el servicio del MTC.")
 
+            # Aqui ya tenemos una respuesta valida del servidor: recien ahora
+            # un orResult vacio significa realmente "no hay datos".
             resultado = data.get("orResult") or []
             if not resultado:
                 return {"sin_resultados": True}
@@ -115,6 +123,11 @@ def consultar(placa: str, max_intentos: int = 15):
             if not parsed:
                 return {"sin_resultados": True}
             return parsed
+
+        # Se agotaron los intentos sin una sola respuesta valida del servidor:
+        # fue un problema de captcha/Cloudflare, NO ausencia de datos. Lanzamos
+        # error para que la UI muestre "reintentar" en vez de "sin informacion".
+        raise RuntimeError("No se pudo resolver el captcha del MTC tras varios intentos.")
     finally:
         if driver is not None:
             try:
@@ -122,8 +135,6 @@ def consultar(placa: str, max_intentos: int = 15):
             except Exception:
                 pass
         SEMAFORO_CHROME.release()
-
-    return {"sin_resultados": True}
 
 
 def main():

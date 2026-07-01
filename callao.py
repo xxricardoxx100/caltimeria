@@ -21,7 +21,9 @@ import numpy as np
 import pytesseract
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
 from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME, aplicar_flags_memoria
 
@@ -181,9 +183,24 @@ def consultar(placa: str, headless: bool = True, max_intentos: int = MAX_INTENTO
         driver = crear_driver(headless=headless)
         for intento in range(1, max_intentos + 1):
             driver.get(URL)
-            time.sleep(2)
 
-            codigo = resolver_captcha(driver)
+            # Esperar a que el captcha realmente aparezca en el DOM. Con varios
+            # Chrome compitiendo por CPU la pagina puede tardar mas de unos
+            # pocos segundos; un sleep fijo hacia que find_element lanzara
+            # NoSuchElementException y reventara toda la consulta.
+            try:
+                WebDriverWait(driver, 20).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, 'img[alt="captcha"]'))
+                )
+            except TimeoutException:
+                print(f"  -> [Intento {intento}] La pagina no cargo el captcha, reintentando...")
+                continue
+
+            try:
+                codigo = resolver_captcha(driver)
+            except NoSuchElementException:
+                print(f"  -> [Intento {intento}] Captcha no disponible aun, reintentando...")
+                continue
             if not codigo:
                 print(f"  -> [Intento {intento}] No se pudo leer el captcha, reintentando...")
                 continue
