@@ -34,34 +34,31 @@ def normalizar_placa(placa: str) -> str:
 def crear_sesion():
     sesion = requests.Session()
     sesion.headers.update({"User-Agent": "Mozilla/5.0"})
+    proxy = os.environ.get("PROXY_URL")
+    if proxy:
+        sesion.proxies = {"http": proxy, "https": proxy}
     sesion.get(URL_PAGINA, timeout=20)
     return sesion
 
 
 def resolver_captcha(sesion):
     r = sesion.get(URL_CAPTCHA, timeout=20)
-    print(f"[RT] captcha_http={r.status_code} content_type={r.headers.get('Content-Type','')}", flush=True)
     try:
         data = r.json()
     except ValueError:
-        print(f"[RT] captcha json error body={r.text[:80]}", flush=True)
         return ""  # respuesta inesperada del servidor, desencadena reintento
     raw = base64.b64decode(data["orResult"])
-    print(f"[RT] raw_bytes={len(raw)}", flush=True)
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
-        print("[RT] cv2.imdecode returned None", flush=True)
         return ""
 
     img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    print(f"[RT] img_shape={img.shape} binary_min={binary.min()} binary_max={binary.max()}", flush=True)
 
     config = "--psm 8 -c tessedit_char_whitelist=0123456789"
     texto = pytesseract.image_to_string(binary, config=config).strip().replace(" ", "").replace("\n", "")
-    print(f"[RT] tess_raw='{pytesseract.image_to_string(binary, config=config)!r}'", flush=True)
     return texto
 
 
@@ -81,14 +78,12 @@ def consultar(placa: str, max_intentos: int = 15):
 
     sesion = crear_sesion()
 
-    for intento in range(max_intentos):
+    for _ in range(max_intentos):
         texto = resolver_captcha(sesion)
-        print(f"[RT] intento={intento} captcha='{texto}' len={len(texto)}", flush=True)
         if len(texto) != 6:
             continue
 
         data = buscar(sesion, placa, texto)
-        print(f"[RT] buscar orCodigo={data.get('orCodigo') if data else None} orStatus={data.get('orStatus') if data else None}", flush=True)
 
         if data is None or data.get("orCodigo") == "-1":
             continue  # captcha incorrecto o respuesta vacia, reintento
