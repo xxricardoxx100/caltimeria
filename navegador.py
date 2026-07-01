@@ -35,20 +35,20 @@ LOCK_CHROMEDRIVER = threading.Lock()
 SEMAFORO_CHROME = threading.Semaphore(3)
 
 
+# Solo flags que NO interfieren con el challenge de Cloudflare. Los sitios de
+# Callao y del MTC (revision tecnica) estan detras de Cloudflare y necesitan
+# que Chrome ejecute el JS del challenge con normalidad. Flags como
+# --disable-background-networking o --disable-features rompian ese bypass
+# (la pagina cargaba pero servia el challenge en vez del captcha), asi que
+# se quitaron. El control de RAM se hace con SEMAFORO_CHROME, no con flags.
 FLAGS_MEMORIA = (
     "--disable-extensions",
-    "--disable-software-rasterizer",
-    "--disable-background-networking",
-    "--disable-background-timer-throttling",
-    "--disable-renderer-backgrounding",
-    "--disable-features=Translate,MediaRouter",
-    "--disk-cache-size=1",
     "--no-first-run",
 )
 
 
 def aplicar_flags_memoria(options):
-    """Agrega flags que reducen el consumo de RAM de cada Chrome."""
+    """Agrega flags livianos y seguros (que no afectan a Cloudflare)."""
     for flag in FLAGS_MEMORIA:
         options.add_argument(flag)
 
