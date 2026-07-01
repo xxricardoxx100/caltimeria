@@ -34,11 +34,17 @@ def normalizar_placa(placa: str) -> str:
 
 def crear_driver():
     options = uc.ChromeOptions()
-    options.add_argument("--headless")
+    # El MTC usa un Cloudflare mas estricto que sirve "Attention Required!" al
+    # --headless clasico (muy detectable). El nuevo modo headless renderiza como
+    # un navegador real y es mucho menos detectable, con lo que Cloudflare sirve
+    # el challenge auto-resoluble en vez del bloqueo.
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-setuid-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--lang=es-PE")
     aplicar_flags_memoria(options)
     with LOCK_CHROMEDRIVER:
         driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)
