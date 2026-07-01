@@ -73,12 +73,14 @@ def consultar(placa: str, max_intentos: int = 15):
 
     sesion = crear_sesion()
 
-    for _ in range(max_intentos):
+    for intento in range(max_intentos):
         texto = resolver_captcha(sesion)
+        print(f"[RT] intento={intento} captcha='{texto}' len={len(texto)}", flush=True)
         if len(texto) != 6:
             continue
 
         data = buscar(sesion, placa, texto)
+        print(f"[RT] buscar orCodigo={data.get('orCodigo') if data else None} orStatus={data.get('orStatus') if data else None}", flush=True)
 
         if data is None or data.get("orCodigo") == "-1":
             continue  # captcha incorrecto o respuesta vacia, reintento
