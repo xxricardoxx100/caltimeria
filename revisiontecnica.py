@@ -115,7 +115,32 @@ def consultar(placa: str, max_intentos: int = 15):
     try:
         driver = crear_driver()
         driver.get(URL_PAGINA)
-        time.sleep(3)  # esperar que Cloudflare pase el challenge
+
+        # Cloudflare desafia la IP de Railway: el AJAX del captcha responde 403
+        # con la pagina de challenge hasta que el JS de Cloudflare (proof-of-work
+        # pesado en CPU) termina y setea la cookie cf_clearance. Bajo carga
+        # (varios Chrome a la vez) eso tarda mas de unos pocos segundos, asi que
+        # esperamos pacientemente a que el fetch deje de dar 403 antes de intentar
+        # leer el captcha. Mientras dormimos, el JS del challenge sigue corriendo.
+        titulo0 = driver.execute_script("return document.title") or ""
+        print(f"  [RT] pagina cargada title={titulo0[:60]!r}", flush=True)
+
+        cf_ok = False
+        for i in range(35):
+            res = _fetch_captcha_raw(driver)
+            if res.get("status") == 200:
+                cf_ok = True
+                print(f"  [RT] Cloudflare paso tras ~{i}s", flush=True)
+                break
+            time.sleep(1)
+
+        if not cf_ok:
+            titulo = driver.execute_script("return document.title") or ""
+            print(f"  [RT] Cloudflare NO paso tras 35s, title={titulo[:60]!r}", flush=True)
+            raise RuntimeError(
+                "Cloudflare bloqueo la consulta de revision tecnica. "
+                "Intenta nuevamente en unos segundos."
+            )
 
         for intento in range(max_intentos):
             # Diagnostico solo en los primeros intentos para no llenar el log.
