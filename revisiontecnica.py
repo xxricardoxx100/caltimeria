@@ -20,7 +20,7 @@ import numpy as np
 import pytesseract
 import undetected_chromedriver as uc
 
-from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME
 
 URL_PAGINA = "https://rec.mtc.gob.pe/Citv/ArConsultaCitv"
 
@@ -86,8 +86,10 @@ def consultar(placa: str, max_intentos: int = 15):
     if not placa:
         raise ValueError("La placa esta vacia.")
 
-    driver = crear_driver()
+    SEMAFORO_CHROME.acquire()
+    driver = None
     try:
+        driver = crear_driver()
         driver.get(URL_PAGINA)
         time.sleep(3)  # esperar que Cloudflare pase el challenge
 
@@ -113,7 +115,12 @@ def consultar(placa: str, max_intentos: int = 15):
                 return {"sin_resultados": True}
             return parsed
     finally:
-        driver.quit()
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+        SEMAFORO_CHROME.release()
 
     return {"sin_resultados": True}
 

@@ -26,6 +26,8 @@ import subprocess
 import threading
 
 LOCK_CHROMEDRIVER = threading.Lock()
+# Limita cuantos Chrome pueden correr en paralelo para evitar OOM en Railway
+SEMAFORO_CHROME = threading.Semaphore(4)
 
 
 def _ruta_cache_chromedriver():

@@ -22,7 +22,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
-from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME
 
 URL = "https://webexterno.sutran.gob.pe/WebExterno/Pages/frmRecordInfracciones.aspx"
 
@@ -112,9 +112,11 @@ def consultar(placa: str, headless: bool = True, max_intentos: int = MAX_INTENTO
     if not placa:
         raise ValueError("La placa esta vacia.")
 
-    driver = crear_driver(headless=headless)
-    wait = WebDriverWait(driver, 15)
+    SEMAFORO_CHROME.acquire()
+    driver = None
     try:
+        driver = crear_driver(headless=headless)
+        wait = WebDriverWait(driver, 15)
         for intento in range(1, max_intentos + 1):
             driver.get(URL)
             time.sleep(2)
@@ -152,7 +154,12 @@ def consultar(placa: str, headless: bool = True, max_intentos: int = MAX_INTENTO
 
         raise RuntimeError(f"No se pudo completar la busqueda tras {max_intentos} intentos.")
     finally:
-        driver.quit()
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+        SEMAFORO_CHROME.release()
 
 
 def main():

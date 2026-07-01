@@ -21,7 +21,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 
-from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME
 
 URL = "https://www.apeseg.org.pe/consultas-soat/"
 IFRAME_SELECTOR = "iframe[src*='consulta-soat']"
@@ -121,8 +121,10 @@ def consultar(placa: str, headless: bool = True, max_intentos: int = 25):
     if not placa:
         raise ValueError("La placa esta vacia.")
 
-    driver = crear_driver(headless=headless)
+    SEMAFORO_CHROME.acquire()
+    driver = None
     try:
+        driver = crear_driver(headless=headless)
         ir_al_formulario(driver)
 
         driver.find_element(By.ID, "placa").send_keys(placa)
@@ -148,7 +150,12 @@ def consultar(placa: str, headless: bool = True, max_intentos: int = 25):
 
         raise RuntimeError("No se pudo resolver el captcha tras varios intentos.")
     finally:
-        driver.quit()
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+        SEMAFORO_CHROME.release()
 
 
 def main():

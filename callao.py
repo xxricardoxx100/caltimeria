@@ -23,7 +23,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 
-from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME
 
 URL = "https://pagopapeletascallao.pe/"
 
@@ -174,8 +174,10 @@ def consultar(placa: str, headless: bool = True, max_intentos: int = MAX_INTENTO
     if not placa:
         raise ValueError("La placa esta vacia.")
 
-    driver = crear_driver(headless=headless)
+    SEMAFORO_CHROME.acquire()
+    driver = None
     try:
+        driver = crear_driver(headless=headless)
         for intento in range(1, max_intentos + 1):
             driver.get(URL)
             time.sleep(2)
@@ -202,7 +204,12 @@ def consultar(placa: str, headless: bool = True, max_intentos: int = MAX_INTENTO
 
         raise RuntimeError(f"No se pudo resolver el captcha tras {max_intentos} intentos.")
     finally:
-        driver.quit()
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+        SEMAFORO_CHROME.release()
 
 
 def main():

@@ -26,7 +26,7 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
-from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME
 
 URL = "https://www.sat.gob.pe/pagosenlinea/"
 
@@ -302,9 +302,11 @@ def consultar(placa: str, headless: bool = True):
 
     _cargar_env()
 
-    driver = crear_driver(headless=headless)
-    wait = WebDriverWait(driver, 15)
+    SEMAFORO_CHROME.acquire()
+    driver = None
     try:
+        driver = crear_driver(headless=headless)
+        wait = WebDriverWait(driver, 15)
         _preparar_busqueda(driver, wait, placa)
 
         sitekey = obtener_sitekey(driver)
@@ -316,10 +318,12 @@ def consultar(placa: str, headless: bool = True):
 
         return extraer_resultados(driver)
     finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+        SEMAFORO_CHROME.release()
 
 
 def main():
