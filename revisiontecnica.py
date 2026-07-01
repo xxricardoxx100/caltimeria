@@ -17,7 +17,7 @@ import os
 import cv2
 import numpy as np
 import pytesseract
-import requests
+from curl_cffi import requests as cffi_requests
 
 URL_PAGINA = "https://rec.mtc.gob.pe/Citv/ArConsultaCitv"
 URL_CAPTCHA = "https://rec.mtc.gob.pe/CITV/refrescarCaptcha"
@@ -32,11 +32,7 @@ def normalizar_placa(placa: str) -> str:
 
 
 def crear_sesion():
-    sesion = requests.Session()
-    sesion.headers.update({"User-Agent": "Mozilla/5.0"})
-    proxy = os.environ.get("PROXY_URL")
-    if proxy:
-        sesion.proxies = {"http": proxy, "https": proxy}
+    sesion = cffi_requests.Session(impersonate="chrome120")
     sesion.get(URL_PAGINA, timeout=20)
     return sesion
 

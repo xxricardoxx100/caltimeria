@@ -41,10 +41,6 @@ def crear_driver(headless: bool = True):
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
-    proxy = os.environ.get("PROXY_URL")
-    if proxy:
-        options.add_argument(f"--proxy-server={proxy}")
-
     with LOCK_CHROMEDRIVER:
         driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)
     driver.set_page_load_timeout(60)

@@ -8,3 +8,4 @@ undetected-chromedriver==3.5.5
 numpy==2.5.0
 opencv-python-headless==4.13.0.92
 pytesseract==0.3.13
+curl-cffi==0.7.4
