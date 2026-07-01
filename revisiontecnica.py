@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Consulta de Certificados de Inspeccion Tecnica Vehicular (CITV) por PLACA en el MTC.
-Tiene captcha de 6 digitos, resuelto con pytesseract. No requiere navegador: todo el
-flujo se hace por HTTP directo contra el backend del portal (rec.mtc.gob.pe).
+Tiene captcha de 6 digitos, resuelto con pytesseract. Usa Chrome para bypassear Cloudflare.
 """
 
 import argparse
@@ -13,15 +12,17 @@ import platform
 import re
 import sys
 import os
+import time
+import urllib.parse
 
 import cv2
 import numpy as np
 import pytesseract
-from curl_cffi import requests as cffi_requests
+import undetected_chromedriver as uc
+
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
 
 URL_PAGINA = "https://rec.mtc.gob.pe/Citv/ArConsultaCitv"
-URL_CAPTCHA = "https://rec.mtc.gob.pe/CITV/refrescarCaptcha"
-URL_BUSCAR = "https://rec.mtc.gob.pe/CITV/JrCITVConsultarFiltro"
 
 if platform.system() == "Windows":
     pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -31,42 +32,53 @@ def normalizar_placa(placa: str) -> str:
     return re.sub(r"[\s\-]", "", placa).upper()
 
 
-def crear_sesion():
-    sesion = cffi_requests.Session(impersonate="chrome120")
-    sesion.get(URL_PAGINA, timeout=20)
-    return sesion
+def crear_driver():
+    options = uc.ChromeOptions()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-setuid-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    with LOCK_CHROMEDRIVER:
+        driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)
+    driver.set_page_load_timeout(30)
+    driver.set_script_timeout(20)
+    return driver
 
 
-def resolver_captcha(sesion):
-    r = sesion.get(URL_CAPTCHA, timeout=20)
-    print(f"[RT] captcha_http={r.status_code}", flush=True)
-    try:
-        data = r.json()
-    except ValueError:
-        print(f"[RT] captcha bloqueado body={r.text[:60]}", flush=True)
-        return ""  # respuesta inesperada del servidor, desencadena reintento
-    raw = base64.b64decode(data["orResult"])
+def resolver_captcha(driver):
+    b64 = driver.execute_async_script("""
+        var cb = arguments[arguments.length-1];
+        fetch('/CITV/refrescarCaptcha')
+            .then(function(r){ return r.ok ? r.json() : Promise.reject(r.status); })
+            .then(function(d){ cb(d.orResult || null); })
+            .catch(function(){ cb(null); });
+    """)
+    if not b64:
+        return ""
+    raw = base64.b64decode(b64)
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
         return ""
-
     img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
     config = "--psm 8 -c tessedit_char_whitelist=0123456789"
     texto = pytesseract.image_to_string(binary, config=config).strip().replace(" ", "").replace("\n", "")
     return texto
 
 
-def buscar(sesion, placa, captcha):
-    parametros = f"1|{placa}||{captcha}"
-    r = sesion.get(URL_BUSCAR, params={"pArrParametros": parametros}, timeout=20)
-    try:
-        return r.json()
-    except ValueError:
-        return None  # respuesta vacia (captcha incorrecto o sin datos)
+def buscar(driver, placa, captcha):
+    params = urllib.parse.urlencode({"pArrParametros": f"1|{placa}||{captcha}"})
+    result = driver.execute_async_script(f"""
+        var cb = arguments[arguments.length-1];
+        fetch('/CITV/JrCITVConsultarFiltro?{params}')
+            .then(function(r){{ return r.ok ? r.json() : Promise.reject(r.status); }})
+            .then(function(d){{ cb(d); }})
+            .catch(function(){{ cb(null); }});
+    """)
+    return result
 
 
 def consultar(placa: str, max_intentos: int = 15):
@@ -74,29 +86,34 @@ def consultar(placa: str, max_intentos: int = 15):
     if not placa:
         raise ValueError("La placa esta vacia.")
 
-    sesion = crear_sesion()
+    driver = crear_driver()
+    try:
+        driver.get(URL_PAGINA)
+        time.sleep(3)  # esperar que Cloudflare pase el challenge
 
-    for _ in range(max_intentos):
-        texto = resolver_captcha(sesion)
-        if len(texto) != 6:
-            continue
+        for _ in range(max_intentos):
+            texto = resolver_captcha(driver)
+            if len(texto) != 6:
+                continue
 
-        data = buscar(sesion, placa, texto)
+            data = buscar(driver, placa, texto)
 
-        if data is None or data.get("orCodigo") == "-1":
-            continue  # captcha incorrecto o respuesta vacia, reintento
+            if data is None or data.get("orCodigo") == "-1":
+                continue
 
-        if not data.get("orStatus"):
-            raise RuntimeError("Ocurrio un error al consultar el servicio del MTC.")
+            if not data.get("orStatus"):
+                raise RuntimeError("Ocurrio un error al consultar el servicio del MTC.")
 
-        resultado = data.get("orResult") or []
-        if not resultado:
-            return {"sin_resultados": True}
+            resultado = data.get("orResult") or []
+            if not resultado:
+                return {"sin_resultados": True}
 
-        parsed = json.loads(resultado[0])
-        if not parsed:
-            return {"sin_resultados": True}
-        return parsed
+            parsed = json.loads(resultado[0])
+            if not parsed:
+                return {"sin_resultados": True}
+            return parsed
+    finally:
+        driver.quit()
 
     return {"sin_resultados": True}
 
