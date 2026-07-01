@@ -47,16 +47,39 @@ def crear_driver():
     return driver
 
 
-def resolver_captcha(driver):
-    b64 = driver.execute_async_script("""
+def _fetch_captcha_raw(driver):
+    """Ejecuta el fetch del captcha desde Chrome y devuelve {status, body}."""
+    return driver.execute_async_script("""
         var cb = arguments[arguments.length-1];
         fetch('/CITV/refrescarCaptcha')
-            .then(function(r){ return r.ok ? r.json() : Promise.reject(r.status); })
-            .then(function(d){ cb(d.orResult || null); })
-            .catch(function(){ cb(null); });
+            .then(function(r){ return r.text().then(function(t){ return {status: r.status, body: t}; }); })
+            .then(function(d){ cb(d); })
+            .catch(function(e){ cb({status: -1, body: String(e)}); });
     """)
-    if not b64:
+
+
+def resolver_captcha(driver, diagnostico=False):
+    res = _fetch_captcha_raw(driver)
+    status = res.get("status") if isinstance(res, dict) else None
+    body = (res.get("body") if isinstance(res, dict) else "") or ""
+
+    if status != 200:
+        if diagnostico:
+            print(f"  [RT] captcha status={status} body[:150]={body[:150]!r}", flush=True)
         return ""
+
+    try:
+        b64 = (json.loads(body) or {}).get("orResult")
+    except Exception:
+        if diagnostico:
+            print(f"  [RT] captcha respuesta no-JSON body[:150]={body[:150]!r}", flush=True)
+        return ""
+
+    if not b64:
+        if diagnostico:
+            print(f"  [RT] captcha orResult vacio", flush=True)
+        return ""
+
     raw = base64.b64decode(b64)
     arr = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -94,8 +117,9 @@ def consultar(placa: str, max_intentos: int = 15):
         driver.get(URL_PAGINA)
         time.sleep(3)  # esperar que Cloudflare pase el challenge
 
-        for _ in range(max_intentos):
-            texto = resolver_captcha(driver)
+        for intento in range(max_intentos):
+            # Diagnostico solo en los primeros intentos para no llenar el log.
+            texto = resolver_captcha(driver, diagnostico=(intento < 3))
             if len(texto) != 6:
                 # El captcha aun no carga (Cloudflare no ha pasado su challenge
                 # o el OCR fallo). Pausar para dar tiempo a que el challenge se
@@ -104,6 +128,9 @@ def consultar(placa: str, max_intentos: int = 15):
                 continue
 
             data = buscar(driver, placa, texto)
+            if intento < 3:
+                print(f"  [RT] intento {intento} captcha='{texto}' -> "
+                      f"data={'None' if data is None else str(data)[:150]!r}", flush=True)
 
             if data is None or data.get("orCodigo") == "-1":
                 # Respuesta invalida (Cloudflare) o captcha incorrecto: reintentar.
