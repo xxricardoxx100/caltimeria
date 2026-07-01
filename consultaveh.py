@@ -7,9 +7,7 @@ Llena la placa, espera el checkbox automatico, busca y devuelve screenshot del r
 
 import argparse
 import base64
-import platform
 import re
-import subprocess
 import sys
 import os
 import time
@@ -24,17 +22,6 @@ from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
 
 URL = "https://consultavehicular.sunarp.gob.pe/consulta-vehicular/inicio"
 
-# En Linux iniciamos un display virtual para que Chrome no corra headless
-# (Cloudflare Turnstile detecta y bloquea Chrome headless)
-_xvfb_proc = None
-if platform.system() == "Linux":
-    _xvfb_proc = subprocess.Popen(
-        ["Xvfb", ":99", "-screen", "0", "1280x900x24"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    os.environ.setdefault("DISPLAY", ":99")
-    time.sleep(1)
-
 
 def normalizar_placa(placa: str) -> str:
     return re.sub(r"[\s\-]", "", placa).upper()
@@ -42,10 +29,7 @@ def normalizar_placa(placa: str) -> str:
 
 def crear_driver(headless: bool = True):
     options = uc.ChromeOptions()
-    if platform.system() == "Linux":
-        # Xvfb proporciona el display — no usamos --headless para bypassear Turnstile
-        pass
-    elif headless:
+    if headless:
         options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-setuid-sandbox")
@@ -83,13 +67,32 @@ def consultar(placa: str, headless: bool = True):
         campo_placa.clear()
         campo_placa.send_keys(placa)
 
-        # Esperar que Cloudflare Turnstile complete la verificacion automatica
+        # Intentar click en el checkbox de Cloudflare Turnstile dentro de su iframe
         try:
-            WebDriverWait(driver, 25).until(
+            iframe = WebDriverWait(driver, 10).until(EC.presence_of_element_located((
+                By.CSS_SELECTOR, "iframe[src*='challenges.cloudflare.com'], iframe[src*='turnstile']"
+            )))
+            driver.switch_to.frame(iframe)
+            try:
+                cb = WebDriverWait(driver, 5).until(EC.presence_of_element_located((
+                    By.CSS_SELECTOR, "input[type='checkbox'], .ctp-checkbox-label, label"
+                )))
+                driver.execute_script("arguments[0].click();", cb)
+            finally:
+                driver.switch_to.default_content()
+        except Exception:
+            try:
+                driver.switch_to.default_content()
+            except Exception:
+                pass
+
+        # Esperar token de Turnstile (max 15s)
+        try:
+            WebDriverWait(driver, 15).until(
                 lambda d: d.find_element(By.NAME, "cf-turnstile-response").get_attribute("value")
             )
         except TimeoutException:
-            pass  # si Turnstile no se completa, intentar buscar igual
+            pass
 
         # Clic en Realizar Busqueda
         boton = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".btn-sunarp-green")))
