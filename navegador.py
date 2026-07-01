@@ -26,8 +26,30 @@ import subprocess
 import threading
 
 LOCK_CHROMEDRIVER = threading.Lock()
-# Limita cuantos Chrome pueden correr en paralelo para evitar OOM en Railway
-SEMAFORO_CHROME = threading.Semaphore(4)
+# Limita cuantos Chrome pueden correr en paralelo para evitar OOM en Railway.
+# Cada Chrome headless consume ~200-300MB; con 5 fuentes que usan Chrome y un
+# contenedor con RAM limitada, permitir mas de 2 en simultaneo hace que el SO
+# mate procesos (se ve como ERR_CONNECTION_RESET o "tab crashed"). El 3er
+# Chrome espera aca hasta que uno libere el slot.
+SEMAFORO_CHROME = threading.Semaphore(2)
+
+
+FLAGS_MEMORIA = (
+    "--disable-extensions",
+    "--disable-software-rasterizer",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-renderer-backgrounding",
+    "--disable-features=Translate,MediaRouter",
+    "--disk-cache-size=1",
+    "--no-first-run",
+)
+
+
+def aplicar_flags_memoria(options):
+    """Agrega flags que reducen el consumo de RAM de cada Chrome."""
+    for flag in FLAGS_MEMORIA:
+        options.add_argument(flag)
 
 
 def _ruta_cache_chromedriver():

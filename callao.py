@@ -23,7 +23,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 
-from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME, aplicar_flags_memoria
 
 URL = "https://pagopapeletascallao.pe/"
 
@@ -53,6 +53,7 @@ def crear_driver(headless: bool = False):
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
+    aplicar_flags_memoria(options)
 
     with LOCK_CHROMEDRIVER:
         driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)

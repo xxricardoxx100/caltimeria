@@ -26,7 +26,7 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
-from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME, aplicar_flags_memoria
 
 URL = "https://www.sat.gob.pe/pagosenlinea/"
 
@@ -74,6 +74,7 @@ def crear_driver(headless: bool = True):
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1366,900")
     options.add_argument("--lang=es-PE")
+    aplicar_flags_memoria(options)
 
     with LOCK_CHROMEDRIVER:
         driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)

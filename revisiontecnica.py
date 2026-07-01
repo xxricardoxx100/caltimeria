@@ -20,7 +20,7 @@ import numpy as np
 import pytesseract
 import undetected_chromedriver as uc
 
-from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME
+from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver, SEMAFORO_CHROME, aplicar_flags_memoria
 
 URL_PAGINA = "https://rec.mtc.gob.pe/Citv/ArConsultaCitv"
 
@@ -39,6 +39,7 @@ def crear_driver():
     options.add_argument("--disable-setuid-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    aplicar_flags_memoria(options)
     with LOCK_CHROMEDRIVER:
         driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)
     driver.set_page_load_timeout(30)
