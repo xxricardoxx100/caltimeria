@@ -39,9 +39,11 @@ def crear_sesion():
 
 def resolver_captcha(sesion):
     r = sesion.get(URL_CAPTCHA, timeout=20)
+    print(f"[RT] captcha_http={r.status_code}", flush=True)
     try:
         data = r.json()
     except ValueError:
+        print(f"[RT] captcha bloqueado body={r.text[:60]}", flush=True)
         return ""  # respuesta inesperada del servidor, desencadena reintento
     raw = base64.b64decode(data["orResult"])
     arr = np.frombuffer(raw, dtype=np.uint8)
