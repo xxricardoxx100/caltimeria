@@ -1,147 +1,122 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Consulta Vehicular en SUNARP.
-Llena la placa, espera el checkbox automatico, busca y devuelve screenshot del resultado.
-"""
-
-import argparse
-import base64
-import re
-import sys
 import os
+import re
 import time
+import warnings
 
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+import requests
 
-from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
+warnings.filterwarnings("ignore")
 
-URL = "https://consultavehicular.sunarp.gob.pe/consulta-vehicular/inicio"
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+TWOCAPTCHA_KEY = os.getenv("TWOCAPTCHA_API_KEY", "")
+SITEKEY = "0x4AAAAAACFzt4Xn8T1Jg9ZS"
+PAGE_URL = "https://consultavehicular.sunarp.gob.pe/consulta-vehicular/inicio"
+API_BASE = "https://api-gateway.sunarp.gob.pe:9443/sunarp/multiservicios"
+API_ID = "70574c7d9194834316a156b1d68fdb90"
 
 
 def normalizar_placa(placa: str) -> str:
     return re.sub(r"[\s\-]", "", placa).upper()
 
 
-def crear_driver(headless: bool = True):
-    options = uc.ChromeOptions()
-    if headless:
-        options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-setuid-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1280,900")
-    options.add_argument("--lang=es-PE")
-    with LOCK_CHROMEDRIVER:
-        driver = uc.Chrome(options=options, driver_executable_path=ruta_chromedriver(), version_main=CHROME_VERSION_MAIN)
-    driver.set_page_load_timeout(60)
-    return driver
+def resolver_turnstile() -> str:
+    r = requests.post(
+        "http://2captcha.com/in.php",
+        data={
+            "key": TWOCAPTCHA_KEY,
+            "method": "turnstile",
+            "sitekey": SITEKEY,
+            "pageurl": PAGE_URL,
+        },
+        timeout=15,
+    )
+    r.raise_for_status()
+    resp = r.text.strip()
+    if not resp.startswith("OK|"):
+        raise RuntimeError(f"2Captcha submit error: {resp}")
+    task_id = resp.split("|", 1)[1]
+
+    for _ in range(30):
+        time.sleep(5)
+        r2 = requests.get(
+            "http://2captcha.com/res.php",
+            params={"key": TWOCAPTCHA_KEY, "action": "get", "id": task_id},
+            timeout=10,
+        )
+        text = r2.text.strip()
+        if text == "CAPCHA_NOT_READY":
+            continue
+        if text.startswith("OK|"):
+            return text.split("|", 1)[1]
+        raise RuntimeError(f"2Captcha result error: {text}")
+    raise RuntimeError("2Captcha timeout after 150s")
 
 
-def capturar_pagina_completa(driver):
-    total_h = driver.execute_script("return document.body.scrollHeight")
-    driver.set_window_size(1280, max(900, total_h + 50))
-    time.sleep(0.4)
-    return driver.get_screenshot_as_png()
-
-
-def consultar(placa: str, headless: bool = True):
+def consultar(placa: str) -> dict:
     placa = normalizar_placa(placa)
     if not placa:
         raise ValueError("La placa esta vacia.")
 
-    driver = crear_driver(headless)
-    wait = WebDriverWait(driver, 20)
+    token = resolver_turnstile()
 
-    try:
-        driver.get(URL)
-        time.sleep(2)
+    r = requests.post(
+        f"{API_BASE}/multiservicio-consvehicular/consulta/getDatosVehiculo",
+        headers={
+            "X-IBM-Client-Id": API_ID,
+            "Content-Type": "application/json",
+        },
+        json={
+            "numPlaca": placa,
+            "regPubId": None,
+            "oficRegId": None,
+            "ipAddress": "0.0.0.0",
+            "appVersion": "1.0",
+            "dG9rZW4": token,
+        },
+        timeout=30,
+        verify=False,
+    )
+    r.raise_for_status()
+    data = r.json()
 
-        # Llenar placa
-        campo_placa = wait.until(EC.presence_of_element_located((By.ID, "nroPlaca")))
-        campo_placa.clear()
-        campo_placa.send_keys(placa)
-
-        # Intentar click en el checkbox de Cloudflare Turnstile dentro de su iframe
-        try:
-            iframe = WebDriverWait(driver, 10).until(EC.presence_of_element_located((
-                By.CSS_SELECTOR, "iframe[src*='challenges.cloudflare.com'], iframe[src*='turnstile']"
-            )))
-            driver.switch_to.frame(iframe)
-            try:
-                cb = WebDriverWait(driver, 5).until(EC.presence_of_element_located((
-                    By.CSS_SELECTOR, "input[type='checkbox'], .ctp-checkbox-label, label"
-                )))
-                driver.execute_script("arguments[0].click();", cb)
-            finally:
-                driver.switch_to.default_content()
-        except Exception:
-            try:
-                driver.switch_to.default_content()
-            except Exception:
-                pass
-
-        # Esperar token de Turnstile (max 15s)
-        try:
-            WebDriverWait(driver, 15).until(
-                lambda d: d.find_element(By.NAME, "cf-turnstile-response").get_attribute("value")
-            )
-        except TimeoutException:
-            pass
-
-        # Clic en Realizar Busqueda
-        boton = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".btn-sunarp-green")))
-        driver.execute_script("arguments[0].click();", boton)
-
-        # Esperar resultado — ant-table o card de resultado
-        try:
-            wait.until(EC.presence_of_element_located((
-                By.CSS_SELECTOR,
-                ".ant-table, .ant-card-body, nz-table, [class*='tarjeta'], [class*='tive'], [class*='resultado']"
-            )))
-        except TimeoutException:
-            pass
-
-        time.sleep(2)
-
-        png = capturar_pagina_completa(driver)
-        return {"imagen_b64": base64.b64encode(png).decode(), "sin_resultados": False}
-
-    except TimeoutException:
+    if data.get("cod") != 1:
         return {"sin_resultados": True}
-    finally:
-        driver.quit()
+
+    imagen_b64 = (data.get("model") or {}).get("imagen")
+    if not imagen_b64:
+        return {"sin_resultados": True}
+
+    return {"imagen_b64": imagen_b64, "sin_resultados": False}
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Consulta Vehicular SUNARP por placa")
-    parser.add_argument("placa", help="Placa a consultar (ej: ABC123)")
-    parser.add_argument("--ver-navegador", action="store_true")
+    import argparse
+    import base64
+    import sys
+
+    parser = argparse.ArgumentParser(description="Consulta Vehicular SUNARP")
+    parser.add_argument("placa")
     args = parser.parse_args()
 
     try:
-        resultado = consultar(args.placa, headless=not args.ver_navegador)
+        resultado = consultar(args.placa)
     except Exception as e:
         print(f"[ERROR] {e}", file=sys.stderr)
-        sys.stderr.flush()
-        os._exit(1)
+        sys.exit(1)
 
     if resultado.get("sin_resultados"):
         print("Sin informacion para esta placa.")
     else:
-        b64 = resultado["imagen_b64"]
-        path = f"sunarp_{args.placa}.png"
-        with open(path, "wb") as f:
-            import base64 as b64mod
-            f.write(b64mod.b64decode(b64))
-        print(f"Screenshot guardado en: {path}")
-    sys.stdout.flush()
-    os._exit(0)
+        fname = f"sunarp_{args.placa}.png"
+        with open(fname, "wb") as f:
+            f.write(base64.b64decode(resultado["imagen_b64"]))
+        print(f"Imagen guardada: {fname}")
 
 
 if __name__ == "__main__":
