@@ -131,8 +131,21 @@ def consultar(placa: str, max_intentos: int = 15):
         titulo0 = driver.execute_script("return document.title") or ""
         print(f"  [RT] pagina cargada title={titulo0[:60]!r}", flush=True)
 
+        # "Attention Required!" es el bloqueo DURO de Cloudflare (la IP de
+        # datacenter esta vetada por el firewall del MTC). No se resuelve
+        # esperando ni con trucos de navegador, asi que fallamos de inmediato:
+        # de lo contrario RT retiene un slot de Chrome por 35s y deja sin
+        # recursos a SOAT y las demas fuentes.
+        if "attention required" in titulo0.lower():
+            raise RuntimeError(
+                "El MTC esta bloqueando las consultas de revision tecnica desde "
+                "este servidor (Cloudflare)."
+            )
+
+        # Si es el challenge JS auto-resoluble ("Just a moment..."), esperar a
+        # que Cloudflare lo complete y el fetch deje de dar 403 (max ~12s).
         cf_ok = False
-        for i in range(35):
+        for i in range(12):
             res = _fetch_captcha_raw(driver)
             if res.get("status") == 200:
                 cf_ok = True
@@ -142,7 +155,7 @@ def consultar(placa: str, max_intentos: int = 15):
 
         if not cf_ok:
             titulo = driver.execute_script("return document.title") or ""
-            print(f"  [RT] Cloudflare NO paso tras 35s, title={titulo[:60]!r}", flush=True)
+            print(f"  [RT] Cloudflare NO paso, title={titulo[:60]!r}", flush=True)
             raise RuntimeError(
                 "Cloudflare bloqueo la consulta de revision tecnica. "
                 "Intenta nuevamente en unos segundos."
