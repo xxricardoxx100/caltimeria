@@ -7,7 +7,9 @@ Llena la placa, espera el checkbox automatico, busca y devuelve screenshot del r
 
 import argparse
 import base64
+import platform
 import re
+import subprocess
 import sys
 import os
 import time
@@ -22,6 +24,17 @@ from navegador import LOCK_CHROMEDRIVER, CHROME_VERSION_MAIN, ruta_chromedriver
 
 URL = "https://consultavehicular.sunarp.gob.pe/consulta-vehicular/inicio"
 
+# En Linux iniciamos un display virtual para que Chrome no corra headless
+# (Cloudflare Turnstile detecta y bloquea Chrome headless)
+_xvfb_proc = None
+if platform.system() == "Linux":
+    _xvfb_proc = subprocess.Popen(
+        ["Xvfb", ":99", "-screen", "0", "1280x900x24"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    os.environ.setdefault("DISPLAY", ":99")
+    time.sleep(1)
+
 
 def normalizar_placa(placa: str) -> str:
     return re.sub(r"[\s\-]", "", placa).upper()
@@ -29,7 +42,10 @@ def normalizar_placa(placa: str) -> str:
 
 def crear_driver(headless: bool = True):
     options = uc.ChromeOptions()
-    if headless:
+    if platform.system() == "Linux":
+        # Xvfb proporciona el display — no usamos --headless para bypassear Turnstile
+        pass
+    elif headless:
         options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-setuid-sandbox")
