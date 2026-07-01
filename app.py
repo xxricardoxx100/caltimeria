@@ -10,9 +10,10 @@ from sutran import consultar as consultar_sutran
 from atu import consultar as consultar_atu
 from soat import consultar as consultar_soat
 from revisiontecnica import consultar as consultar_revisiontecnica
+from consultaveh import consultar as consultar_sunarp
 
 app = FastAPI(title="Consulta Vehicular")
-executor = ThreadPoolExecutor(max_workers=6)
+executor = ThreadPoolExecutor(max_workers=7)
 
 
 async def ejecutar(func, placa, **kwargs):
@@ -125,6 +126,12 @@ HTML = """<!DOCTYPE html>
     <div class="status idle" id="status-revisiontecnica">Esperando consulta.</div>
     <div id="content-revisiontecnica"></div>
   </div>
+
+  <div class="card" style="grid-column: 1 / -1;">
+    <h2>Consulta Vehicular (SUNARP)</h2>
+    <div class="status idle" id="status-sunarp">Esperando consulta.</div>
+    <div id="content-sunarp"></div>
+  </div>
 </div>
 
 <script>
@@ -218,6 +225,15 @@ const renderizar = {
       '</div>';
   },
 
+  sunarp(data) {
+    const div = document.getElementById('content-sunarp');
+    if (data.sin_resultados || !data.imagen_b64) {
+      div.innerHTML = '<p class="sin-deuda">Sin informacion de consulta vehicular para esta placa</p>';
+      return;
+    }
+    div.innerHTML = '<img src="data:image/png;base64,' + data.imagen_b64 + '" style="width:100%;border-radius:4px;margin-top:4px;" />';
+  },
+
   revisiontecnica(data) {
     const div = document.getElementById('content-revisiontecnica');
     const u = data.ultimo;
@@ -266,7 +282,7 @@ async function consultarTodo() {
   btn.disabled = true;
 
   try {
-    const fuentes = ['satlima', 'callao', 'sutran', 'atu', 'soat', 'revisiontecnica'];
+    const fuentes = ['satlima', 'callao', 'sutran', 'atu', 'soat', 'revisiontecnica', 'sunarp'];
     await Promise.allSettled(fuentes.map(f => consultarFuente(f, placa)));
   } finally {
     btn.disabled = false;
@@ -313,6 +329,11 @@ async def consultar_atu_ep(req: PlacaRequest):
 @app.post("/consultar/soat")
 async def consultar_soat_ep(req: PlacaRequest):
     return await ejecutar(consultar_soat, req.placa)
+
+
+@app.post("/consultar/sunarp")
+async def consultar_sunarp_ep(req: PlacaRequest):
+    return await ejecutar(consultar_sunarp, req.placa)
 
 
 @app.post("/consultar/revisiontecnica")
